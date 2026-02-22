@@ -24,8 +24,6 @@ spring:
 
 # Feature flags
 feature:
-  user-registration:
-    enabled: true
   user-read:
     enabled: true
   user-update-profile:
