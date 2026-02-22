@@ -1,6 +1,51 @@
 <h1 align="center">🌟 Spring-Boot-Microservices-Banking-Application 🌟</h1>
+
+## 🖥️ Frontend Dashboard
+
+This project includes a **React + TypeScript + Tailwind CSS** frontend (`banking-frontend/`) that provides a browser-based UI for interacting with all the banking microservices. No need for Postman or curl — just open the dashboard and start testing.
+
+### Features
+
+- **Auth** — Obtain JWT tokens from Keycloak for authenticated API Gateway requests
+- **Users** — Register, view, update users and manage user status
+- **Accounts** — Create savings accounts, check balances, activate/close accounts
+- **Fund Transfers** — Send money between accounts and view transfer history
+- **Transactions** — Make deposits and withdrawals, view transaction history
+- **Demo** — An interactive demo with two pre-seeded users (Alice & Bob) that showcases the full banking flow: account setup, sending money, and switching between user dashboards to see real-time balance updates
+- **Request Log** — Every API call is logged at the bottom of the page with method, URL, status code, and full response body
+- **Gateway Toggle** — Switch between calling microservices directly or routing through the API Gateway with JWT auth
+
+### Quick Start
+
+**Prerequisites:** All 7 backend microservices and Keycloak must be running (see [Getting Started](#-getting-started) below).
+
+```bash
+cd banking-frontend
+npm install
+npm run dev
+```
+
+Then open **http://localhost:5173** in your browser.
+
+> **Note:** The frontend runs in development mode only (`npm run dev`). The Vite dev server proxies API requests to the backend services to avoid CORS issues. A production build is not currently supported since it would require a separate backend proxy or CORS configuration on each microservice.
+
+### Using the Demo Tab
+
+The **Demo** tab provides a one-click setup that:
+
+1. Registers two users (Alice & Bob) with full profiles
+2. Approves both users
+3. Creates savings accounts for each
+4. Deposits $1,000 into each account
+5. Activates both accounts
+
+After setup, you'll see Alice's dashboard with her balance, recent activity, and a friends list showing Bob. Use the **Send Money** component to transfer funds to Bob, then click **"Switch to Bob's Account"** in the upper right to see his updated balance and the incoming transfer in his activity feed.
+
+---
+
 <h2>📋 Table of Contents</h2>
 
+- [🖥️ Frontend Dashboard](#-frontend-dashboard)
 - [🔍 About](#-about)
 - [🏛️ Architecture](#-architecture)
 - [🚀 Microservices](#-microservices)
