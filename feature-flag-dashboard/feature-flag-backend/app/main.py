@@ -186,6 +186,39 @@ FEATURE_FLAGS = [
 removal_sessions: dict[str, dict] = {}
 
 
+async def _refresh_in_progress_sessions() -> None:
+    """Poll Devin API to update the status of any in-progress removal sessions."""
+    if not DEVIN_API_TOKEN:
+        return
+    in_progress = [
+        (fid, info) for fid, info in removal_sessions.items()
+        if info["status"] == "in_progress"
+    ]
+    if not in_progress:
+        return
+    try:
+        async with httpx.AsyncClient() as client:
+            for flag_id, session_info in in_progress:
+                try:
+                    response = await client.get(
+                        f"{DEVIN_API_URL}/session/{session_info['session_id']}",
+                        headers={"Authorization": f"Bearer {DEVIN_API_TOKEN}"},
+                        timeout=10.0,
+                    )
+                    if response.status_code == 200:
+                        devin_data = response.json()
+                        devin_status = devin_data.get("status", "unknown")
+                        if devin_status in ("finished", "stopped"):
+                            session_info["status"] = "completed"
+                            session_info["pull_request"] = devin_data.get("pull_request")
+                        elif devin_status == "error":
+                            session_info["status"] = "failed"
+                except httpx.RequestError:
+                    pass
+    except httpx.RequestError:
+        pass
+
+
 @app.get("/healthz")
 async def healthz():
     return {"status": "ok"}
@@ -194,6 +227,7 @@ async def healthz():
 @app.get("/api/flags")
 async def list_flags():
     """Return all feature flags with their metadata and removal status."""
+    await _refresh_in_progress_sessions()
     flags_with_status = []
     for flag in FEATURE_FLAGS:
         flag_copy = dict(flag)
@@ -285,28 +319,8 @@ async def get_removal_status(flag_id: str):
     if flag_id not in removal_sessions:
         return {"status": "not_started"}
 
-    session_info = removal_sessions[flag_id]
-
-    if DEVIN_API_TOKEN and session_info["status"] == "in_progress":
-        try:
-            async with httpx.AsyncClient() as client:
-                response = await client.get(
-                    f"{DEVIN_API_URL}/session/{session_info['session_id']}",
-                    headers={"Authorization": f"Bearer {DEVIN_API_TOKEN}"},
-                    timeout=10.0,
-                )
-            if response.status_code == 200:
-                devin_data = response.json()
-                devin_status = devin_data.get("status", "unknown")
-                if devin_status in ("finished", "stopped"):
-                    session_info["status"] = "completed"
-                    session_info["pull_request"] = devin_data.get("pull_request")
-                elif devin_status == "error":
-                    session_info["status"] = "failed"
-        except httpx.RequestError:
-            pass
-
-    return session_info
+    await _refresh_in_progress_sessions()
+    return removal_sessions[flag_id]
 
 
 def _build_backend_removal_prompt(flag: dict) -> str:
