@@ -21,9 +21,10 @@ app.add_middleware(
 DEVIN_API_URL = "https://api.devin.ai/v1"
 DEVIN_API_TOKEN = os.getenv("DEVIN_API_TOKEN", "")
 REPO = "komeslik/Spring-Boot-Microservices-Banking-Application"
+GITHUB_RAW_BASE = f"https://raw.githubusercontent.com/{REPO}/main"
 
-# ── Feature Flag Registry ──
-FEATURE_FLAGS = [
+# ── Feature Flag Registry (all known flags — live status checked against repo) ──
+ALL_KNOWN_FLAGS = [
     {
         "id": "user-registration",
         "name": "User Registration",
@@ -185,6 +186,65 @@ FEATURE_FLAGS = [
 # In-memory tracking of removal sessions
 removal_sessions: dict[str, dict] = {}
 
+# Cache for live flag status from GitHub (to avoid hammering the API)
+_live_flags_cache: dict[str, list[dict]] = {"flags": []}
+_live_flags_cache_time: float = 0.0
+LIVE_CACHE_TTL = 60.0  # seconds
+
+
+async def _check_flag_exists_in_repo(client: httpx.AsyncClient, flag: dict) -> bool:
+    """Check if a feature flag still exists in the repo by reading its config file from GitHub."""
+    config_path = flag["config_location"]
+    url = f"{GITHUB_RAW_BASE}/{config_path}"
+    try:
+        response = await client.get(url, timeout=10.0)
+        if response.status_code != 200:
+            # File doesn't exist or can't be read — flag may have been removed
+            return False
+        content = response.text
+        if flag["type"] == "backend":
+            # Backend flags are stored as nested YAML keys, e.g.:
+            #   feature:
+            #     user-read:
+            #       enabled: true
+            # The property is "feature.user-read.enabled" but in the file
+            # we need to search for the middle key portion (e.g. "user-read")
+            parts = flag["property"].split(".")
+            # The unique middle key (e.g. "user-read" from "feature.user-read.enabled")
+            flag_key = parts[1] if len(parts) >= 3 else flag["property"]
+            return flag_key in content
+        else:
+            # For frontend flags, check if the flag name exists in the file
+            return flag["field_name"] in content
+    except httpx.RequestError:
+        # On network error, assume flag still exists (don't hide it due to transient errors)
+        return True
+
+
+async def _get_live_flags() -> list[dict]:
+    """Return only the flags that currently exist in the repo (cached for LIVE_CACHE_TTL seconds)."""
+    import time
+    global _live_flags_cache, _live_flags_cache_time
+
+    now = time.time()
+    if _live_flags_cache["flags"] and (now - _live_flags_cache_time) < LIVE_CACHE_TTL:
+        return _live_flags_cache["flags"]
+
+    live_flags = []
+    try:
+        async with httpx.AsyncClient() as client:
+            for flag in ALL_KNOWN_FLAGS:
+                exists = await _check_flag_exists_in_repo(client, flag)
+                if exists:
+                    live_flags.append(flag)
+    except Exception:
+        # On any error, fall back to returning all known flags
+        return ALL_KNOWN_FLAGS
+
+    _live_flags_cache["flags"] = live_flags
+    _live_flags_cache_time = now
+    return live_flags
+
 
 async def _refresh_in_progress_sessions() -> None:
     """Poll Devin API to update the status of any in-progress removal sessions."""
@@ -226,10 +286,11 @@ async def healthz():
 
 @app.get("/api/flags")
 async def list_flags():
-    """Return all feature flags with their metadata and removal status."""
+    """Return only flags that currently exist in the repo, with removal status."""
     await _refresh_in_progress_sessions()
+    live_flags = await _get_live_flags()
     flags_with_status = []
-    for flag in FEATURE_FLAGS:
+    for flag in live_flags:
         flag_copy = dict(flag)
         if flag["id"] in removal_sessions:
             flag_copy["removal"] = removal_sessions[flag["id"]]
@@ -240,7 +301,7 @@ async def list_flags():
 @app.get("/api/flags/{flag_id}")
 async def get_flag(flag_id: str):
     """Return a single feature flag by ID."""
-    for flag in FEATURE_FLAGS:
+    for flag in ALL_KNOWN_FLAGS:
         if flag["id"] == flag_id:
             flag_copy = dict(flag)
             if flag_id in removal_sessions:
@@ -256,7 +317,7 @@ async def remove_flag(flag_id: str):
         raise HTTPException(status_code=500, detail="DEVIN_API_TOKEN not configured")
 
     flag = None
-    for f in FEATURE_FLAGS:
+    for f in ALL_KNOWN_FLAGS:
         if f["id"] == flag_id:
             flag = f
             break
