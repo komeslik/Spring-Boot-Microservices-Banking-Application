@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect } from 'react'
 import { Users, ArrowRightLeft, RefreshCw, UserCircle, DollarSign, Activity, ChevronRight, Loader2, CheckCircle2, AlertCircle } from 'lucide-react'
+import featureFlags from './featureFlags'
 
 /* ── Proxy base URLs (same as App.tsx) ── */
 const API = {
@@ -11,6 +12,21 @@ const API = {
 }
 
 const ACC_PREFIX = '060014'
+
+const PROXY_TO_REAL: Record<string, string> = {
+  '/proxy/users': 'http://localhost:8082',
+  '/proxy/accounts': 'http://localhost:8081',
+  '/proxy/fund-transfers': 'http://localhost:8085',
+  '/proxy/transactions': 'http://localhost:8084',
+  '/proxy/sequence': 'http://localhost:8083',
+}
+
+function toDisplayUrl(proxyUrl: string): string {
+  for (const [prefix, real] of Object.entries(PROXY_TO_REAL)) {
+    if (proxyUrl.startsWith(prefix)) return proxyUrl.replace(prefix, real)
+  }
+  return proxyUrl
+}
 
 /* ── Types ── */
 interface DemoUser {
@@ -46,23 +62,37 @@ type SetupStep = {
   detail?: string
 }
 
+type AddLogFn = (method: string, url: string, status: number | string, response: string, success: boolean) => void
+
 /* ── Helper: raw fetch with JSON ── */
-async function api(method: string, url: string, body?: unknown) {
-  const res = await fetch(url, {
-    method,
-    headers: { 'Content-Type': 'application/json' },
-    body: body ? JSON.stringify(body) : undefined,
-  })
-  const text = await res.text()
-  let data
-  try { data = JSON.parse(text) } catch { data = text }
-  return { ok: res.ok, status: res.status, data }
+function createApi(addLog?: AddLogFn) {
+  return async function api(method: string, url: string, body?: unknown) {
+    try {
+      const res = await fetch(url, {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: body ? JSON.stringify(body) : undefined,
+      })
+      const text = await res.text()
+      let data
+      try { data = JSON.parse(text) } catch { data = text }
+      if (addLog) {
+        const responseStr = typeof data === 'object' ? JSON.stringify(data, null, 2) : String(data)
+        addLog(method, toDisplayUrl(url), res.status, responseStr, res.ok)
+      }
+      return { ok: res.ok, status: res.status, data }
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err)
+      if (addLog) addLog(method, toDisplayUrl(url), 'ERR', errMsg, false)
+      return { ok: false, status: 0, data: errMsg }
+    }
+  }
 }
 
 /* ================================================================
    DemoPanel – the main exported component
    ================================================================ */
-export default function DemoPanel() {
+export default function DemoPanel({ addLog }: { addLog?: AddLogFn }) {
   /* ── state ── */
   const [alice, setAlice] = useState<DemoUser | null>(null)
   const [bob, setBob] = useState<DemoUser | null>(null)
@@ -79,6 +109,8 @@ export default function DemoPanel() {
   const [sendAmount, setSendAmount] = useState('50')
   const [sending, setSending] = useState(false)
   const [sendResult, setSendResult] = useState<{ ok: boolean; msg: string } | null>(null)
+
+  const api = createApi(addLog)
 
   const currentUser = activeUser === 'alice' ? alice : bob
   const friendUser = activeUser === 'alice' ? bob : alice
@@ -483,6 +515,7 @@ export default function DemoPanel() {
           </div>
 
           {/* Send Money */}
+          {featureFlags.ENABLE_SEND_MONEY ? (
           <div className="bg-gray-50 rounded-xl p-5">
             <div className="flex items-center gap-2 mb-4">
               <ArrowRightLeft size={18} className="text-gray-500" />
@@ -532,6 +565,15 @@ export default function DemoPanel() {
               )}
             </div>
           </div>
+          ) : (
+          <div className="bg-gray-50 rounded-xl p-5">
+            <div className="flex items-center gap-2 mb-4">
+              <ArrowRightLeft size={18} className="text-gray-400" />
+              <h3 className="font-semibold text-gray-400">Send Money</h3>
+            </div>
+            <p className="text-sm text-gray-400 text-center py-4">Send Money is currently disabled by feature flag.</p>
+          </div>
+          )}
         </div>
       </div>
     </div>

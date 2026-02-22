@@ -2,6 +2,7 @@ package org.training.transactions.controller;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -20,6 +21,12 @@ public class TransactionController {
 
     private final TransactionService transactionService;
 
+    @Value("${feature.transaction-create.enabled:true}")
+    private boolean transactionCreateEnabled;
+
+    @Value("${feature.transaction-read.enabled:true}")
+    private boolean transactionReadEnabled;
+
     /**
      * Add transactions to the system.
      *
@@ -27,7 +34,10 @@ public class TransactionController {
      * @return The response entity with the added transaction data.
      */
     @PostMapping
-    public ResponseEntity<Response> addTransactions(@RequestBody TransactionDto transactionDto) {
+    public ResponseEntity<?> addTransactions(@RequestBody TransactionDto transactionDto) {
+        if (!transactionCreateEnabled) {
+            return new ResponseEntity<>("Transaction creation is currently disabled", HttpStatus.SERVICE_UNAVAILABLE);
+        }
         return new ResponseEntity<>(transactionService.addTransaction(transactionDto), HttpStatus.CREATED);
     }
 
@@ -50,7 +60,10 @@ public class TransactionController {
      * @return The list of transactions
      */
     @GetMapping
-    public ResponseEntity<List<TransactionRequest>> getTransactions(@RequestParam String accountId) {
+    public ResponseEntity<?> getTransactions(@RequestParam String accountId) {
+        if (!transactionReadEnabled) {
+            return new ResponseEntity<>("Transaction read is currently disabled", HttpStatus.SERVICE_UNAVAILABLE);
+        }
         return new ResponseEntity<>(transactionService.getTransaction(accountId), HttpStatus.OK);
     }
 

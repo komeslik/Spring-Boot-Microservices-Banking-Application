@@ -1,6 +1,7 @@
 package org.training.fundtransfer.controller;
 
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -18,14 +19,21 @@ public class FundTransferController {
 
     private final FundTransferService fundTransferService;
 
+    @Value("${feature.fund-transfer.enabled:true}")
+    private boolean fundTransferEnabled;
+
     /**
      * Handles the fund transfer request.
+     * Guarded by the feature.fund-transfer.enabled flag.
      *
      * @param fundTransferRequest The fund transfer request object.
      * @return The response entity containing the fund transfer response.
      */
     @PostMapping
-    public ResponseEntity<FundTransferResponse> fundTransfer(@RequestBody FundTransferRequest fundTransferRequest) {
+    public ResponseEntity<?> fundTransfer(@RequestBody FundTransferRequest fundTransferRequest) {
+        if (!fundTransferEnabled) {
+            return new ResponseEntity<>("Fund transfer feature is currently disabled", HttpStatus.SERVICE_UNAVAILABLE);
+        }
         return new ResponseEntity<>(fundTransferService.fundTransfer(fundTransferRequest), HttpStatus.CREATED);
     }
 

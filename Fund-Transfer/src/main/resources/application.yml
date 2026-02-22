@@ -21,3 +21,8 @@ spring:
     properties:
       hibernate:
         format_sql: true
+
+# Feature flags
+feature:
+  fund-transfer:
+    enabled: true
