@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect } from 'react'
 import { Users, ArrowRightLeft, RefreshCw, UserCircle, DollarSign, Activity, ChevronRight, Loader2, CheckCircle2, AlertCircle } from 'lucide-react'
+import featureFlags from './featureFlags'
 
 /* ── Proxy base URLs (same as App.tsx) ── */
 const API = {
@@ -483,6 +484,7 @@ export default function DemoPanel() {
           </div>
 
           {/* Send Money */}
+          {featureFlags.ENABLE_SEND_MONEY ? (
           <div className="bg-gray-50 rounded-xl p-5">
             <div className="flex items-center gap-2 mb-4">
               <ArrowRightLeft size={18} className="text-gray-500" />
@@ -532,6 +534,15 @@ export default function DemoPanel() {
               )}
             </div>
           </div>
+          ) : (
+          <div className="bg-gray-50 rounded-xl p-5">
+            <div className="flex items-center gap-2 mb-4">
+              <ArrowRightLeft size={18} className="text-gray-400" />
+              <h3 className="font-semibold text-gray-400">Send Money</h3>
+            </div>
+            <p className="text-sm text-gray-400 text-center py-4">Send Money is currently disabled by feature flag.</p>
+          </div>
+          )}
         </div>
       </div>
     </div>
