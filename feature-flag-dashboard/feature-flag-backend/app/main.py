@@ -337,11 +337,19 @@ def _build_backend_removal_prompt(flag: dict) -> str:
    - If the entire test class only tested this one flag, delete the test file entirely.
    - If the test class tests multiple flags, only remove the methods for this flag.
 
-5. **Run `mvn test`** in the affected service directory to ensure all remaining tests pass.
+5. **Run `mvn test`** in the affected service directory to ensure all remaining tests pass. **Capture the full terminal output of the test run** -- you will need it for the PR description.
 
-6. **Create a PR** into `main` with:
+6. **Take a screenshot of the terminal** showing the test results (BUILD SUCCESS or test summary). Save the screenshot so it can be attached to the PR.
+
+7. **Create a PR** into `main` with:
    - Title: "Remove feature flag: {flag['name']}"
-   - Description documenting: which flag was removed, which files were changed, that tests pass.
+   - Description that includes:
+     - Which flag was removed and why (it was fully enabled and no longer needed)
+     - Which files were changed and a summary of each change
+     - **A "Test Results" section** containing:
+       - The full terminal output of `mvn test` wrapped in a code block (copy-paste the entire output including the test count summary and BUILD SUCCESS line)
+       - A screenshot of the terminal showing the test results (attach the screenshot image to the PR description)
+       - A clear statement like "All X tests passed" with the specific count
 
 **Important:** The feature flag is currently enabled (true), so removing it means the endpoint should always be available (the "enabled" code path becomes the only path). Do NOT remove the endpoint itself -- only remove the flag gating logic.
 """
@@ -372,11 +380,19 @@ def _build_frontend_removal_prompt(flag: dict) -> str:
    - Remove the `ENABLE_DEMO_TAB` test cases.
    - If no tests remain, delete the test file.
 
-5. **Run `npm test`** in `banking-frontend/` to ensure tests pass.
+5. **Run `npm test`** in `banking-frontend/` to ensure tests pass. **Capture the full terminal output of the test run** -- you will need it for the PR description.
 
-6. **Create a PR** into `main` with:
+6. **Take a screenshot of the terminal** showing the test results. Save the screenshot so it can be attached to the PR.
+
+7. **Create a PR** into `main` with:
    - Title: "Remove feature flag: {flag['name']}"
-   - Description documenting: which flag was removed, which files were changed, that tests pass.
+   - Description that includes:
+     - Which flag was removed and why (it was fully enabled and no longer needed)
+     - Which files were changed and a summary of each change
+     - **A "Test Results" section** containing:
+       - The full terminal output of `npm test` wrapped in a code block (copy-paste the entire output including pass/fail counts)
+       - A screenshot of the terminal showing the test results (attach the screenshot image to the PR description)
+       - A clear statement like "All X tests passed" with the specific count
 
 **Important:** The flag is currently enabled (true), so removing it means the Demo tab should always be shown. Do NOT remove the Demo tab itself.
 """
@@ -404,11 +420,19 @@ def _build_frontend_removal_prompt(flag: dict) -> str:
    - Remove the `ENABLE_SEND_MONEY` test cases.
    - If no tests remain, delete the test file.
 
-5. **Run `npm test`** in `banking-frontend/` to ensure tests pass.
+5. **Run `npm test`** in `banking-frontend/` to ensure tests pass. **Capture the full terminal output of the test run** -- you will need it for the PR description.
 
-6. **Create a PR** into `main` with:
+6. **Take a screenshot of the terminal** showing the test results. Save the screenshot so it can be attached to the PR.
+
+7. **Create a PR** into `main` with:
    - Title: "Remove feature flag: {flag['name']}"
-   - Description documenting: which flag was removed, which files were changed, that tests pass.
+   - Description that includes:
+     - Which flag was removed and why (it was fully enabled and no longer needed)
+     - Which files were changed and a summary of each change
+     - **A "Test Results" section** containing:
+       - The full terminal output of `npm test` wrapped in a code block (copy-paste the entire output including pass/fail counts)
+       - A screenshot of the terminal showing the test results (attach the screenshot image to the PR description)
+       - A clear statement like "All X tests passed" with the specific count
 
 **Important:** The flag is currently enabled (true), so removing it means the Send Money component should always be shown. Do NOT remove the component itself.
 """
