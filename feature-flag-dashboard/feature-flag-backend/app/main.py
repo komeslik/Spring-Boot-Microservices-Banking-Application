@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import httpx
 import os
+import random
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -21,9 +22,10 @@ app.add_middleware(
 DEVIN_API_URL = "https://api.devin.ai/v1"
 DEVIN_API_TOKEN = os.getenv("DEVIN_API_TOKEN", "")
 REPO = "komeslik/Spring-Boot-Microservices-Banking-Application"
+GITHUB_RAW_BASE = f"https://raw.githubusercontent.com/{REPO}/main"
 
-# ── Feature Flag Registry ──
-FEATURE_FLAGS = [
+# ── Feature Flag Registry (all known flags — live status checked against repo) ──
+ALL_KNOWN_FLAGS = [
     {
         "id": "user-registration",
         "name": "User Registration",
@@ -182,8 +184,157 @@ FEATURE_FLAGS = [
     },
 ]
 
+# ── Flag Dependency Graph ──
+# Maps flag_id -> list of flag_ids it depends on
+# Based on the actual service call chain in the banking app
+FLAG_DEPENDENCIES: dict[str, list[str]] = {
+    # User registration doesn't depend on other flagged features
+    "user-registration": [],
+    # Read endpoints are independent
+    "user-read": [],
+    "account-read": [],
+    "transaction-read": [],
+    # User profile/status updates depend on being able to read users
+    "user-update-profile": ["user-read"],
+    "user-update-status": ["user-read"],
+    # Account creation depends on sequence generator (for account numbers) and user-read (to validate user)
+    "account-creation": ["sequence-generation", "user-read"],
+    # Account status update depends on reading accounts
+    "account-update-status": ["account-read"],
+    # Transaction create depends on account-read (to check balance)
+    "transaction-create": ["account-read"],
+    # Sequence generation is independent (utility service)
+    "sequence-generation": [],
+    # Fund transfer depends on account-read, transaction-create, and account-update-status
+    "fund-transfer": ["account-read", "transaction-create"],
+    # Demo tab depends on all the backend features used in the demo setup flow
+    "enable-demo-tab": ["user-registration", "user-read", "user-update-profile", "user-update-status",
+                        "account-creation", "account-read", "account-update-status",
+                        "transaction-create", "transaction-read", "sequence-generation", "fund-transfer"],
+    # Send money depends on fund-transfer and account-read
+    "enable-send-money": ["fund-transfer", "account-read"],
+}
+
+# ── Mock Staleness Data ──
+# Deterministic random staleness per flag (seeded by flag id for consistency)
+_staleness_cache: dict[str, int] = {}
+
+def _get_mock_staleness(flag_id: str) -> int:
+    """Return a deterministic mock staleness value in days for a flag."""
+    if flag_id not in _staleness_cache:
+        rng = random.Random(flag_id)  # deterministic seed per flag
+        _staleness_cache[flag_id] = rng.randint(3, 180)
+    return _staleness_cache[flag_id]
+
+
+def _get_all_dependents(flag_id: str) -> list[str]:
+    """Return all flags that transitively depend on the given flag."""
+    dependents: list[str] = []
+    for fid, deps in FLAG_DEPENDENCIES.items():
+        if flag_id in deps:
+            dependents.append(fid)
+    return dependents
+
+
+def _get_dependency_count(flag_id: str) -> int:
+    """Count how many flags depend on this flag (used for safety ranking)."""
+    return len(_get_all_dependents(flag_id))
+
+
 # In-memory tracking of removal sessions
 removal_sessions: dict[str, dict] = {}
+
+# Cache for live flag status from GitHub (to avoid hammering the API)
+_live_flags_cache: dict[str, list[dict]] = {"flags": []}
+_live_flags_cache_time: float = 0.0
+LIVE_CACHE_TTL = 60.0  # seconds
+
+
+async def _check_flag_exists_in_repo(client: httpx.AsyncClient, flag: dict) -> bool:
+    """Check if a feature flag still exists in the repo by reading its config file from GitHub."""
+    config_path = flag["config_location"]
+    url = f"{GITHUB_RAW_BASE}/{config_path}"
+    try:
+        response = await client.get(url, timeout=10.0)
+        if response.status_code != 200:
+            # File doesn't exist or can't be read — flag may have been removed
+            return False
+        content = response.text
+        if flag["type"] == "backend":
+            # Backend flags are stored as nested YAML keys, e.g.:
+            #   feature:
+            #     user-read:
+            #       enabled: true
+            # The property is "feature.user-read.enabled" but in the file
+            # we need to search for the middle key portion (e.g. "user-read")
+            parts = flag["property"].split(".")
+            # The unique middle key (e.g. "user-read" from "feature.user-read.enabled")
+            flag_key = parts[1] if len(parts) >= 3 else flag["property"]
+            return flag_key in content
+        else:
+            # For frontend flags, check if the flag name exists in the file
+            return flag["field_name"] in content
+    except httpx.RequestError:
+        # On network error, assume flag still exists (don't hide it due to transient errors)
+        return True
+
+
+async def _get_live_flags() -> list[dict]:
+    """Return only the flags that currently exist in the repo (cached for LIVE_CACHE_TTL seconds)."""
+    import time
+    global _live_flags_cache, _live_flags_cache_time
+
+    now = time.time()
+    if _live_flags_cache["flags"] and (now - _live_flags_cache_time) < LIVE_CACHE_TTL:
+        return _live_flags_cache["flags"]
+
+    live_flags = []
+    try:
+        async with httpx.AsyncClient() as client:
+            for flag in ALL_KNOWN_FLAGS:
+                exists = await _check_flag_exists_in_repo(client, flag)
+                if exists:
+                    live_flags.append(flag)
+    except Exception:
+        # On any error, fall back to returning all known flags
+        return ALL_KNOWN_FLAGS
+
+    _live_flags_cache["flags"] = live_flags
+    _live_flags_cache_time = now
+    return live_flags
+
+
+async def _refresh_in_progress_sessions() -> None:
+    """Poll Devin API to update the status of any in-progress removal sessions."""
+    if not DEVIN_API_TOKEN:
+        return
+    in_progress = [
+        (fid, info) for fid, info in removal_sessions.items()
+        if info["status"] == "in_progress"
+    ]
+    if not in_progress:
+        return
+    try:
+        async with httpx.AsyncClient() as client:
+            for flag_id, session_info in in_progress:
+                try:
+                    response = await client.get(
+                        f"{DEVIN_API_URL}/session/{session_info['session_id']}",
+                        headers={"Authorization": f"Bearer {DEVIN_API_TOKEN}"},
+                        timeout=10.0,
+                    )
+                    if response.status_code == 200:
+                        devin_data = response.json()
+                        devin_status = devin_data.get("status", "unknown")
+                        if devin_status in ("finished", "stopped"):
+                            session_info["status"] = "completed"
+                            session_info["pull_request"] = devin_data.get("pull_request")
+                        elif devin_status == "error":
+                            session_info["status"] = "failed"
+                except httpx.RequestError:
+                    pass
+    except httpx.RequestError:
+        pass
 
 
 @app.get("/healthz")
@@ -193,20 +344,34 @@ async def healthz():
 
 @app.get("/api/flags")
 async def list_flags():
-    """Return all feature flags with their metadata and removal status."""
+    """Return only flags that currently exist in the repo, with removal status, staleness, and dependencies."""
+    await _refresh_in_progress_sessions()
+    live_flags = await _get_live_flags()
+    live_flag_ids = {f["id"] for f in live_flags}
     flags_with_status = []
-    for flag in FEATURE_FLAGS:
+    for flag in live_flags:
         flag_copy = dict(flag)
         if flag["id"] in removal_sessions:
             flag_copy["removal"] = removal_sessions[flag["id"]]
+        # Add staleness (mock)
+        flag_copy["staleness_days"] = _get_mock_staleness(flag["id"])
+        # Add dependencies (only those that still exist in repo)
+        raw_deps = FLAG_DEPENDENCIES.get(flag["id"], [])
+        flag_copy["dependencies"] = [d for d in raw_deps if d in live_flag_ids]
+        # Add dependents (flags that depend on this one)
+        flag_copy["dependents"] = [fid for fid in _get_all_dependents(flag["id"]) if fid in live_flag_ids]
+        # Safety score = number of live dependents (lower = safer to remove)
+        flag_copy["dependent_count"] = len(flag_copy["dependents"])
         flags_with_status.append(flag_copy)
+    # Sort by safety: least dependents first (safest to remove)
+    flags_with_status.sort(key=lambda f: f["dependent_count"])
     return {"flags": flags_with_status}
 
 
 @app.get("/api/flags/{flag_id}")
 async def get_flag(flag_id: str):
     """Return a single feature flag by ID."""
-    for flag in FEATURE_FLAGS:
+    for flag in ALL_KNOWN_FLAGS:
         if flag["id"] == flag_id:
             flag_copy = dict(flag)
             if flag_id in removal_sessions:
@@ -222,7 +387,7 @@ async def remove_flag(flag_id: str):
         raise HTTPException(status_code=500, detail="DEVIN_API_TOKEN not configured")
 
     flag = None
-    for f in FEATURE_FLAGS:
+    for f in ALL_KNOWN_FLAGS:
         if f["id"] == flag_id:
             flag = f
             break
@@ -285,28 +450,8 @@ async def get_removal_status(flag_id: str):
     if flag_id not in removal_sessions:
         return {"status": "not_started"}
 
-    session_info = removal_sessions[flag_id]
-
-    if DEVIN_API_TOKEN and session_info["status"] == "in_progress":
-        try:
-            async with httpx.AsyncClient() as client:
-                response = await client.get(
-                    f"{DEVIN_API_URL}/session/{session_info['session_id']}",
-                    headers={"Authorization": f"Bearer {DEVIN_API_TOKEN}"},
-                    timeout=10.0,
-                )
-            if response.status_code == 200:
-                devin_data = response.json()
-                devin_status = devin_data.get("status", "unknown")
-                if devin_status in ("finished", "stopped"):
-                    session_info["status"] = "completed"
-                    session_info["pull_request"] = devin_data.get("pull_request")
-                elif devin_status == "error":
-                    session_info["status"] = "failed"
-        except httpx.RequestError:
-            pass
-
-    return session_info
+    await _refresh_in_progress_sessions()
+    return removal_sessions[flag_id]
 
 
 def _build_backend_removal_prompt(flag: dict) -> str:

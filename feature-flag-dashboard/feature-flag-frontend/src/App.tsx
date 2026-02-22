@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, Fragment } from 'react'
 import './App.css'
 import {
   Flag,
@@ -10,9 +10,16 @@ import {
   CheckCircle2,
   AlertCircle,
   Loader2,
-  GitBranch,
   Search,
   X,
+  Clock,
+  Shield,
+  ShieldAlert,
+  ShieldCheck,
+  Network,
+  ChevronDown,
+  ChevronRight,
+  ArrowRight,
 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -47,6 +54,10 @@ interface FeatureFlag {
   property: string
   field_name: string
   status: string
+  staleness_days?: number
+  dependencies?: string[]
+  dependents?: string[]
+  dependent_count?: number
   removal?: {
     flag_id: string
     session_id: string
@@ -70,6 +81,38 @@ function App() {
   } | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
   const [filterType, setFilterType] = useState<'all' | 'backend' | 'frontend'>('all')
+  const [expandedDeps, setExpandedDeps] = useState<Set<string>>(new Set())
+
+  const toggleDeps = (flagId: string) => {
+    setExpandedDeps((prev) => {
+      const next = new Set(prev)
+      if (next.has(flagId)) {
+        next.delete(flagId)
+      } else {
+        next.add(flagId)
+      }
+      return next
+    })
+  }
+
+  const getFlagNameById = (id: string): string => {
+    const flag = flags.find((f) => f.id === id)
+    return flag ? flag.name : id
+  }
+
+  const getStalenessColor = (days: number | undefined) => {
+    if (!days) return { bg: 'bg-zinc-100', text: 'text-zinc-600', label: 'Unknown' }
+    if (days >= 90) return { bg: 'bg-red-100', text: 'text-red-700', label: 'Stale' }
+    if (days >= 30) return { bg: 'bg-amber-100', text: 'text-amber-700', label: 'Aging' }
+    return { bg: 'bg-green-100', text: 'text-green-700', label: 'Fresh' }
+  }
+
+  const getSafetyInfo = (flag: FeatureFlag) => {
+    const count = flag.dependent_count ?? 0
+    if (count === 0) return { icon: ShieldCheck, color: 'text-green-500', bg: 'bg-green-50', label: 'Safe', description: 'No flags depend on this' }
+    if (count <= 2) return { icon: Shield, color: 'text-amber-500', bg: 'bg-amber-50', label: 'Caution', description: `${count} flag${count > 1 ? 's' : ''} depend${count === 1 ? 's' : ''} on this` }
+    return { icon: ShieldAlert, color: 'text-red-500', bg: 'bg-red-50', label: 'Risky', description: `${count} flags depend on this` }
+  }
 
   const fetchFlags = useCallback(async () => {
     try {
@@ -135,7 +178,7 @@ function App() {
 
   const backendCount = flags.filter((f) => f.type === 'backend').length
   const frontendCount = flags.filter((f) => f.type === 'frontend').length
-  const inProgressCount = flags.filter((f) => f.removal?.status === 'in_progress').length
+  const staleCount = flags.filter((f) => (f.staleness_days ?? 0) >= 90).length
 
   return (
     <div className="min-h-screen bg-zinc-50">
@@ -195,12 +238,12 @@ function App() {
           </Card>
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-zinc-500">Removals In Progress</CardTitle>
+              <CardTitle className="text-sm font-medium text-zinc-500">Stale (&ge;90d)</CardTitle>
             </CardHeader>
             <CardContent>
               <div className="flex items-center gap-2">
-                <GitBranch size={18} className="text-orange-500" />
-                <span className="text-3xl font-bold text-zinc-900">{inProgressCount}</span>
+                <Clock size={18} className="text-red-500" />
+                <span className="text-3xl font-bold text-zinc-900">{staleCount}</span>
               </div>
             </CardContent>
           </Card>
@@ -257,10 +300,12 @@ function App() {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead className="w-64">Flag</TableHead>
+                  <TableHead className="w-56">Flag</TableHead>
                   <TableHead>Type</TableHead>
                   <TableHead>Service</TableHead>
-                  <TableHead>Property</TableHead>
+                  <TableHead>Age</TableHead>
+                  <TableHead>Safety</TableHead>
+                  <TableHead>Deps</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead className="text-right">Action</TableHead>
                 </TableRow>
@@ -268,98 +313,168 @@ function App() {
               <TableBody>
                 {loading && flags.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={6} className="text-center py-12 text-zinc-400">
+                    <TableCell colSpan={8} className="text-center py-12 text-zinc-400">
                       <Loader2 size={24} className="animate-spin mx-auto mb-2" />
                       Loading feature flags...
                     </TableCell>
                   </TableRow>
                 ) : filteredFlags.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={6} className="text-center py-12 text-zinc-400">
+                    <TableCell colSpan={8} className="text-center py-12 text-zinc-400">
                       No feature flags found.
                     </TableCell>
                   </TableRow>
                 ) : (
-                  filteredFlags.map((flag) => (
-                    <TableRow key={flag.id} className="group">
-                      <TableCell>
-                        <div>
-                          <p className="font-medium text-zinc-900">{flag.name}</p>
-                          <p className="text-xs text-zinc-500 mt-0.5">{flag.description}</p>
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <Badge
-                          variant={flag.type === 'backend' ? 'default' : 'secondary'}
-                          className={
-                            flag.type === 'backend'
-                              ? 'bg-blue-100 text-blue-700 hover:bg-blue-100'
-                              : 'bg-purple-100 text-purple-700 hover:bg-purple-100'
-                          }
-                        >
-                          {flag.type === 'backend' ? (
-                            <Server size={10} className="mr-1" />
-                          ) : (
-                            <Monitor size={10} className="mr-1" />
-                          )}
-                          {flag.type}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="text-sm text-zinc-600">{flag.service}</TableCell>
-                      <TableCell>
-                        <code className="text-xs bg-zinc-100 px-2 py-0.5 rounded font-mono text-zinc-700">
-                          {flag.property}
-                        </code>
-                      </TableCell>
-                      <TableCell>
-                        {flag.removal?.status === 'in_progress' ? (
-                          <div className="flex items-center gap-1.5">
-                            <Loader2 size={14} className="animate-spin text-orange-500" />
-                            <span className="text-xs text-orange-600 font-medium">Removing...</span>
-                            {flag.removal.session_url && (
-                              <a
-                                href={flag.removal.session_url}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="text-orange-500 hover:text-orange-700"
+                  filteredFlags.map((flag) => {
+                    const staleness = getStalenessColor(flag.staleness_days)
+                    const safety = getSafetyInfo(flag)
+                    const SafetyIcon = safety.icon
+                    const hasDeps = (flag.dependencies?.length ?? 0) > 0 || (flag.dependents?.length ?? 0) > 0
+                    const isExpanded = expandedDeps.has(flag.id)
+                    return (
+                      <Fragment key={flag.id}>
+                        <TableRow className="group">
+                          <TableCell>
+                            <div>
+                              <p className="font-medium text-zinc-900">{flag.name}</p>
+                              <p className="text-xs text-zinc-500 mt-0.5 line-clamp-1">{flag.description}</p>
+                            </div>
+                          </TableCell>
+                          <TableCell>
+                            <Badge
+                              variant={flag.type === 'backend' ? 'default' : 'secondary'}
+                              className={
+                                flag.type === 'backend'
+                                  ? 'bg-blue-100 text-blue-700 hover:bg-blue-100'
+                                  : 'bg-purple-100 text-purple-700 hover:bg-purple-100'
+                              }
+                            >
+                              {flag.type === 'backend' ? (
+                                <Server size={10} className="mr-1" />
+                              ) : (
+                                <Monitor size={10} className="mr-1" />
+                              )}
+                              {flag.type}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="text-sm text-zinc-600">{flag.service}</TableCell>
+                          <TableCell>
+                            <div className="flex items-center gap-1.5">
+                              <span className={`inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full ${staleness.bg} ${staleness.text}`}>
+                                <Clock size={10} />
+                                {flag.staleness_days}d
+                              </span>
+                              <span className={`text-[10px] ${staleness.text}`}>{staleness.label}</span>
+                            </div>
+                          </TableCell>
+                          <TableCell>
+                            <div className="flex items-center gap-1.5" title={safety.description}>
+                              <SafetyIcon size={16} className={safety.color} />
+                              <span className={`text-xs font-medium ${safety.color}`}>{safety.label}</span>
+                            </div>
+                          </TableCell>
+                          <TableCell>
+                            {hasDeps ? (
+                              <button
+                                onClick={() => toggleDeps(flag.id)}
+                                className="flex items-center gap-1 text-xs text-zinc-600 hover:text-zinc-900 transition-colors"
                               >
-                                <ExternalLink size={12} />
-                              </a>
+                                <Network size={14} className="text-zinc-400" />
+                                <span>{flag.dependencies?.length ?? 0} in / {flag.dependents?.length ?? 0} out</span>
+                                {isExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                              </button>
+                            ) : (
+                              <span className="text-xs text-zinc-400">None</span>
                             )}
-                          </div>
-                        ) : flag.removal?.status === 'completed' ? (
-                          <div className="flex items-center gap-1.5">
-                            <CheckCircle2 size={14} className="text-green-500" />
-                            <span className="text-xs text-green-600 font-medium">Removed</span>
-                          </div>
-                        ) : (
-                          <div className="flex items-center gap-1.5">
-                            <CheckCircle2 size={14} className="text-emerald-500" />
-                            <span className="text-xs text-emerald-600 font-medium">Enabled</span>
-                          </div>
+                          </TableCell>
+                          <TableCell>
+                            {flag.removal?.status === 'in_progress' ? (
+                              <div className="flex items-center gap-1.5">
+                                <Loader2 size={14} className="animate-spin text-orange-500" />
+                                <span className="text-xs text-orange-600 font-medium">Removing...</span>
+                                {flag.removal.session_url && (
+                                  <a
+                                    href={flag.removal.session_url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="text-orange-500 hover:text-orange-700"
+                                  >
+                                    <ExternalLink size={12} />
+                                  </a>
+                                )}
+                              </div>
+                            ) : flag.removal?.status === 'completed' ? (
+                              <div className="flex items-center gap-1.5">
+                                <CheckCircle2 size={14} className="text-green-500" />
+                                <span className="text-xs text-green-600 font-medium">Removed</span>
+                              </div>
+                            ) : (
+                              <div className="flex items-center gap-1.5">
+                                <CheckCircle2 size={14} className="text-emerald-500" />
+                                <span className="text-xs text-emerald-600 font-medium">Enabled</span>
+                              </div>
+                            )}
+                          </TableCell>
+                          <TableCell className="text-right">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="text-red-500 hover:text-red-700 hover:bg-red-50 opacity-0 group-hover:opacity-100 transition-opacity"
+                              onClick={() => {
+                                setSelectedFlag(flag)
+                                setDialogOpen(true)
+                                setRemovalResult(null)
+                              }}
+                              disabled={
+                                flag.removal?.status === 'in_progress' ||
+                                flag.removal?.status === 'completed'
+                              }
+                            >
+                              <Trash2 size={14} className="mr-1" />
+                              Remove
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                        {/* Expanded dependency row */}
+                        {isExpanded && hasDeps && (
+                          <TableRow key={`${flag.id}-deps`} className="bg-zinc-50/80">
+                            <TableCell colSpan={8} className="py-3 px-6">
+                              <div className="flex gap-8">
+                                {/* Dependencies (what this flag needs) */}
+                                {(flag.dependencies?.length ?? 0) > 0 && (
+                                  <div className="flex-1">
+                                    <p className="text-xs font-semibold text-zinc-500 mb-2 uppercase tracking-wider">Depends on ({flag.dependencies?.length})</p>
+                                    <div className="flex flex-wrap gap-1.5">
+                                      {flag.dependencies?.map((depId) => (
+                                        <span key={depId} className="inline-flex items-center gap-1 text-xs bg-blue-50 text-blue-700 border border-blue-200 px-2 py-1 rounded-md">
+                                          <ArrowRight size={10} />
+                                          {getFlagNameById(depId)}
+                                        </span>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+                                {/* Dependents (what depends on this flag) */}
+                                {(flag.dependents?.length ?? 0) > 0 && (
+                                  <div className="flex-1">
+                                    <p className="text-xs font-semibold text-zinc-500 mb-2 uppercase tracking-wider">Required by ({flag.dependents?.length})</p>
+                                    <div className="flex flex-wrap gap-1.5">
+                                      {flag.dependents?.map((depId) => (
+                                        <span key={depId} className="inline-flex items-center gap-1 text-xs bg-orange-50 text-orange-700 border border-orange-200 px-2 py-1 rounded-md">
+                                          <ArrowRight size={10} />
+                                          {getFlagNameById(depId)}
+                                        </span>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            </TableCell>
+                          </TableRow>
                         )}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="text-red-500 hover:text-red-700 hover:bg-red-50 opacity-0 group-hover:opacity-100 transition-opacity"
-                          onClick={() => {
-                            setSelectedFlag(flag)
-                            setDialogOpen(true)
-                            setRemovalResult(null)
-                          }}
-                          disabled={
-                            flag.removal?.status === 'in_progress' ||
-                            flag.removal?.status === 'completed'
-                          }
-                        >
-                          <Trash2 size={14} className="mr-1" />
-                          Remove
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                  ))
+                      </Fragment>
+                    )
+                  })
                 )}
               </TableBody>
             </Table>
