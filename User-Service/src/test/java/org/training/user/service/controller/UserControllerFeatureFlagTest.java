@@ -9,7 +9,6 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.test.util.ReflectionTestUtils;
-import org.training.user.service.model.dto.CreateUser;
 import org.training.user.service.model.dto.UserDto;
 import org.training.user.service.model.dto.UserUpdate;
 import org.training.user.service.model.dto.UserUpdateStatus;
@@ -36,35 +35,9 @@ class UserControllerFeatureFlagTest {
     @BeforeEach
     void setUp() {
         // Enable all flags by default
-        ReflectionTestUtils.setField(userController, "userRegistrationEnabled", true);
         ReflectionTestUtils.setField(userController, "userReadEnabled", true);
         ReflectionTestUtils.setField(userController, "userUpdateProfileEnabled", true);
         ReflectionTestUtils.setField(userController, "userUpdateStatusEnabled", true);
-    }
-
-    // --- Registration flag tests ---
-
-    @Test
-    void createUser_whenEnabled_shouldCallService() {
-        CreateUser createUser = new CreateUser();
-        Response response = Response.builder().responseMessage("User created successfully").build();
-        when(userService.createUser(any(CreateUser.class))).thenReturn(response);
-
-        ResponseEntity<?> result = userController.createUser(createUser);
-
-        assertEquals(HttpStatus.OK, result.getStatusCode());
-        verify(userService).createUser(any(CreateUser.class));
-    }
-
-    @Test
-    void createUser_whenDisabled_shouldReturn503() {
-        ReflectionTestUtils.setField(userController, "userRegistrationEnabled", false);
-
-        ResponseEntity<?> result = userController.createUser(new CreateUser());
-
-        assertEquals(HttpStatus.SERVICE_UNAVAILABLE, result.getStatusCode());
-        assertEquals("User registration is currently disabled", result.getBody());
-        verifyNoInteractions(userService);
     }
 
     // --- Read flag tests ---

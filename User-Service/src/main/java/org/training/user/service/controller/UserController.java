@@ -10,7 +10,6 @@ import org.training.user.service.model.dto.CreateUser;
 import org.training.user.service.model.dto.UserDto;
 import org.training.user.service.model.dto.UserUpdate;
 import org.training.user.service.model.dto.UserUpdateStatus;
-import org.training.user.service.model.dto.response.Response;
 import org.training.user.service.service.UserService;
 
 import java.util.List;
@@ -22,9 +21,6 @@ import java.util.List;
 public class UserController {
 
     private final UserService userService;
-
-    @Value("${feature.user-registration.enabled:true}")
-    private boolean userRegistrationEnabled;
 
     @Value("${feature.user-read.enabled:true}")
     private boolean userReadEnabled;
@@ -43,9 +39,6 @@ public class UserController {
      */
     @PostMapping("/register")
     public ResponseEntity<?> createUser(@RequestBody CreateUser userDto) {
-        if (!userRegistrationEnabled) {
-            return new ResponseEntity<>("User registration is currently disabled", HttpStatus.SERVICE_UNAVAILABLE);
-        }
         log.info("creating user with: {}", userDto.toString());
         return ResponseEntity.ok(userService.createUser(userDto));
     }
