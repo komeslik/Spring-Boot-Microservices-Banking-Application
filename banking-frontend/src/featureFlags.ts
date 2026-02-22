@@ -7,9 +7,6 @@
  */
 
 const featureFlags = {
-  /** Show the Demo tab in the sidebar navigation */
-  ENABLE_DEMO_TAB: true,
-
   /** Show the Send Money component inside the Demo tab dashboard */
   ENABLE_SEND_MONEY: true,
 }
