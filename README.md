@@ -17,7 +17,57 @@ This project includes a **React + TypeScript + Tailwind CSS** frontend (`banking
 
 ### Quick Start
 
-**Prerequisites:** All 7 backend microservices and Keycloak must be running (see [Getting Started](#-getting-started) below).
+**Prerequisites:** All 7 backend microservices and Keycloak must be running before starting the frontend.
+
+#### 1. Start the backend services
+
+Make sure you have the following installed:
+- **Java 17**
+- **Maven**
+- **MySQL** (running on port 3306 with root/root credentials)
+- **Docker** (for Keycloak)
+
+**Start Keycloak** (Docker):
+
+```bash
+docker run -d --name keycloak -p 8571:8080 \
+  -e KEYCLOAK_ADMIN=admin -e KEYCLOAK_ADMIN_PASSWORD=admin \
+  quay.io/keycloak/keycloak:21.1.2 start-dev
+```
+
+Then configure the `banking-service` realm, clients, and roles as described in the [Keycloak setup guide](https://devscribbles.hashnode.dev/mastering-microservices-authentication-and-authorization-with-keycloak).
+
+**Create the MySQL databases** (one per microservice):
+
+```sql
+CREATE DATABASE user_service;
+CREATE DATABASE account_service;
+CREATE DATABASE fund_transfer_service;
+CREATE DATABASE transaction_service;
+CREATE DATABASE sequence_generator;
+```
+
+**Build and start all services** (from the repo root):
+
+```bash
+# Build all services
+for dir in Service-Registry API-Gateway Sequence-Generator User-Service Account-Service Fund-Transfer Transaction-Service; do
+  (cd $dir && mvn clean package -DskipTests)
+done
+
+# Start them in order (each in its own terminal)
+java -jar Service-Registry/target/serviceregistry-*.jar      # port 8761
+java -jar API-Gateway/target/apigateway-*.jar                # port 8080
+java -jar Sequence-Generator/target/sequencegenerator-*.jar  # port 8083
+java -jar User-Service/target/userservice-*.jar              # port 8082
+java -jar Account-Service/target/accountService-*.jar        # port 8081
+java -jar Fund-Transfer/target/fundtransfer-*.jar            # port 8085
+java -jar Transaction-Service/target/transactions-*.jar      # port 8084
+```
+
+Wait until all services are registered on the Eureka dashboard at **http://localhost:8761**.
+
+#### 2. Start the frontend
 
 ```bash
 cd banking-frontend
@@ -41,11 +91,76 @@ The **Demo** tab provides a one-click setup that:
 
 After setup, you'll see Alice's dashboard with her balance, recent activity, and a friends list showing Bob. Use the **Send Money** component to transfer funds to Bob, then click **"Switch to Bob's Account"** in the upper right to see his updated balance and the incoming transfer in his activity feed.
 
+![Demo tab — Alice's dashboard](banking-frontend/demo-screenshot.png)
+
 ---
+
+## 📡 API Endpoints
+
+All services are accessible directly or through the API Gateway (`http://localhost:8080`) with a JWT Bearer token.
+
+### 👤 User Service (port 8082)
+
+Base path: `/api/users`
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/api/users/register` | Register a new user (creates in both MySQL and Keycloak) |
+| `GET` | `/api/users` | List all users |
+| `GET` | `/api/users/{userId}` | Get user by ID |
+| `GET` | `/api/users/auth/{authId}` | Get user by Keycloak auth ID |
+| `GET` | `/api/users/accounts/{accountId}` | Get user by account number |
+| `PUT` | `/api/users/{id}` | Update user profile (firstName, lastName, contactNo, address, gender, occupation, martialStatus, nationality) |
+| `PATCH` | `/api/users/{id}` | Update user status (`PENDING`, `APPROVED`, `DISABLED`, `REJECTED`) |
+
+### 💼 Account Service (port 8081)
+
+Base path: `/accounts`
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/accounts` | Create a new account (requires `userId` and `accountType`) |
+| `GET` | `/accounts?accountNumber={num}` | Get account by account number |
+| `GET` | `/accounts/{userId}` | Get account by user ID (only works for ACTIVE accounts) |
+| `GET` | `/accounts/balance?accountNumber={num}` | Get account balance |
+| `GET` | `/accounts/{accountId}/transactions` | Get transactions for an account |
+| `PUT` | `/accounts?accountNumber={num}` | Update account details |
+| `PATCH` | `/accounts?accountNumber={num}` | Update account status (`PENDING`, `ACTIVE`, `BLOCKED`, `CLOSED`) — activation requires balance >= 1000 |
+| `PUT` | `/accounts/closure?accountNumber={num}` | Close an account |
+
+### 💸 Fund Transfer Service (port 8085)
+
+Base path: `/fund-transfers`
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/fund-transfers` | Initiate a fund transfer (requires `fromAccount`, `toAccount`, `amount`) |
+| `GET` | `/fund-transfers?accountId={num}` | List all transfers for an account |
+| `GET` | `/fund-transfers/{referenceId}` | Get transfer details by reference ID |
+
+### 💳 Transaction Service (port 8084)
+
+Base path: `/transactions`
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/transactions` | Create a transaction — deposit or withdrawal (requires `accountId`, `transactionType`, `amount`) |
+| `POST` | `/transactions/internal` | Record internal transfer transactions (used by Fund Transfer service) |
+| `GET` | `/transactions?accountId={num}` | List transactions for an account |
+| `GET` | `/transactions/{referenceId}` | Get transactions by reference ID |
+
+### 🔢 Sequence Generator (port 8083)
+
+Base path: `/sequence`
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/sequence` | Generate the next account number (returns incrementing sequence used by Account Service) |
 
 <h2>📋 Table of Contents</h2>
 
 - [🖥️ Frontend Dashboard](#-frontend-dashboard)
+- [📡 API Endpoints](#-api-endpoints)
 - [🔍 About](#-about)
 - [🏛️ Architecture](#-architecture)
 - [🚀 Microservices](#-microservices)
