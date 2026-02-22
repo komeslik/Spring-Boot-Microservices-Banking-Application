@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import httpx
 import os
+import random
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -183,6 +184,63 @@ ALL_KNOWN_FLAGS = [
     },
 ]
 
+# ── Flag Dependency Graph ──
+# Maps flag_id -> list of flag_ids it depends on
+# Based on the actual service call chain in the banking app
+FLAG_DEPENDENCIES: dict[str, list[str]] = {
+    # User registration doesn't depend on other flagged features
+    "user-registration": [],
+    # Read endpoints are independent
+    "user-read": [],
+    "account-read": [],
+    "transaction-read": [],
+    # User profile/status updates depend on being able to read users
+    "user-update-profile": ["user-read"],
+    "user-update-status": ["user-read"],
+    # Account creation depends on sequence generator (for account numbers) and user-read (to validate user)
+    "account-creation": ["sequence-generation", "user-read"],
+    # Account status update depends on reading accounts
+    "account-update-status": ["account-read"],
+    # Transaction create depends on account-read (to check balance)
+    "transaction-create": ["account-read"],
+    # Sequence generation is independent (utility service)
+    "sequence-generation": [],
+    # Fund transfer depends on account-read, transaction-create, and account-update-status
+    "fund-transfer": ["account-read", "transaction-create"],
+    # Demo tab depends on all the backend features used in the demo setup flow
+    "enable-demo-tab": ["user-registration", "user-read", "user-update-profile", "user-update-status",
+                        "account-creation", "account-read", "account-update-status",
+                        "transaction-create", "transaction-read", "sequence-generation", "fund-transfer"],
+    # Send money depends on fund-transfer and account-read
+    "enable-send-money": ["fund-transfer", "account-read"],
+}
+
+# ── Mock Staleness Data ──
+# Deterministic random staleness per flag (seeded by flag id for consistency)
+_staleness_cache: dict[str, int] = {}
+
+def _get_mock_staleness(flag_id: str) -> int:
+    """Return a deterministic mock staleness value in days for a flag."""
+    if flag_id not in _staleness_cache:
+        rng = random.Random(flag_id)  # deterministic seed per flag
+        _staleness_cache[flag_id] = rng.randint(3, 180)
+    return _staleness_cache[flag_id]
+
+
+def _get_all_dependents(flag_id: str) -> list[str]:
+    """Return all flags that transitively depend on the given flag."""
+    dependents: list[str] = []
+    for fid, deps in FLAG_DEPENDENCIES.items():
+        if flag_id in deps:
+            dependents.append(fid)
+    return dependents
+
+
+def _get_dependency_count(flag_id: str) -> int:
+    """Count how many flags depend on this flag (used for safety ranking)."""
+    return len(_get_all_dependents(flag_id))
+
+
 # In-memory tracking of removal sessions
 removal_sessions: dict[str, dict] = {}
 
@@ -286,15 +344,27 @@ async def healthz():
 
 @app.get("/api/flags")
 async def list_flags():
-    """Return only flags that currently exist in the repo, with removal status."""
+    """Return only flags that currently exist in the repo, with removal status, staleness, and dependencies."""
     await _refresh_in_progress_sessions()
     live_flags = await _get_live_flags()
+    live_flag_ids = {f["id"] for f in live_flags}
     flags_with_status = []
     for flag in live_flags:
         flag_copy = dict(flag)
         if flag["id"] in removal_sessions:
             flag_copy["removal"] = removal_sessions[flag["id"]]
+        # Add staleness (mock)
+        flag_copy["staleness_days"] = _get_mock_staleness(flag["id"])
+        # Add dependencies (only those that still exist in repo)
+        raw_deps = FLAG_DEPENDENCIES.get(flag["id"], [])
+        flag_copy["dependencies"] = [d for d in raw_deps if d in live_flag_ids]
+        # Add dependents (flags that depend on this one)
+        flag_copy["dependents"] = [fid for fid in _get_all_dependents(flag["id"]) if fid in live_flag_ids]
+        # Safety score = number of live dependents (lower = safer to remove)
+        flag_copy["dependent_count"] = len(flag_copy["dependents"])
         flags_with_status.append(flag_copy)
+    # Sort by safety: least dependents first (safest to remove)
+    flags_with_status.sort(key=lambda f: f["dependent_count"])
     return {"flags": flags_with_status}
 
 
