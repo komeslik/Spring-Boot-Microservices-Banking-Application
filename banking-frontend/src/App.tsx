@@ -1,7 +1,6 @@
 import { useState } from 'react'
 import { Users, Wallet, ArrowRightLeft, Receipt, Key, ChevronDown, ChevronUp, AlertCircle, CheckCircle2, Play } from 'lucide-react'
 import DemoPanel from './DemoPanel'
-import featureFlags from './featureFlags'
 
 const DIRECT_API = {
   users: '/proxy/users',
@@ -101,7 +100,7 @@ function App() {
     { name: 'accounts', label: 'Accounts', icon: <Wallet size={18} /> },
     { name: 'transfers', label: 'Fund Transfers', icon: <ArrowRightLeft size={18} /> },
     { name: 'transactions', label: 'Transactions', icon: <Receipt size={18} /> },
-    ...(featureFlags.ENABLE_DEMO_TAB ? [{ name: 'demo' as TabName, label: 'Demo', icon: <Play size={18} /> }] : []),
+    { name: 'demo' as TabName, label: 'Demo', icon: <Play size={18} /> },
   ]
 
   return (
