@@ -1,5 +1,6 @@
 import { useState } from 'react'
-import { Users, Wallet, ArrowRightLeft, Receipt, Key, ChevronDown, ChevronUp, AlertCircle, CheckCircle2 } from 'lucide-react'
+import { Users, Wallet, ArrowRightLeft, Receipt, Key, ChevronDown, ChevronUp, AlertCircle, CheckCircle2, Play } from 'lucide-react'
+import DemoPanel from './DemoPanel'
 
 const DIRECT_API = {
   users: '/proxy/users',
@@ -33,7 +34,7 @@ function toDisplayUrl(proxyUrl: string): string {
   return proxyUrl
 }
 
-type TabName = 'auth' | 'users' | 'accounts' | 'transfers' | 'transactions'
+type TabName = 'auth' | 'users' | 'accounts' | 'transfers' | 'transactions' | 'demo'
 
 interface LogEntry {
   id: number
@@ -99,6 +100,7 @@ function App() {
     { name: 'accounts', label: 'Accounts', icon: <Wallet size={18} /> },
     { name: 'transfers', label: 'Fund Transfers', icon: <ArrowRightLeft size={18} /> },
     { name: 'transactions', label: 'Transactions', icon: <Receipt size={18} /> },
+    { name: 'demo', label: 'Demo', icon: <Play size={18} /> },
   ]
 
   return (
@@ -160,6 +162,7 @@ function App() {
             {activeTab === 'accounts' && <AccountsPanel apiCall={apiCall} getBase={getBase} />}
             {activeTab === 'transfers' && <TransfersPanel apiCall={apiCall} getBase={getBase} />}
             {activeTab === 'transactions' && <TransactionsPanel apiCall={apiCall} getBase={getBase} />}
+            {activeTab === 'demo' && <DemoPanel />}
           </div>
 
           <div className="bg-white rounded-lg border border-gray-200">
