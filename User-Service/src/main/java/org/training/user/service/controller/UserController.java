@@ -2,6 +2,7 @@ package org.training.user.service.controller;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -22,6 +23,18 @@ public class UserController {
 
     private final UserService userService;
 
+    @Value("${feature.user-registration.enabled:true}")
+    private boolean userRegistrationEnabled;
+
+    @Value("${feature.user-read.enabled:true}")
+    private boolean userReadEnabled;
+
+    @Value("${feature.user-update-profile.enabled:true}")
+    private boolean userUpdateProfileEnabled;
+
+    @Value("${feature.user-update-status.enabled:true}")
+    private boolean userUpdateStatusEnabled;
+
     /**
      * Creates a new user.
      *
@@ -29,7 +42,10 @@ public class UserController {
      * @return the response entity containing the response
      */
     @PostMapping("/register")
-    public ResponseEntity<Response> createUser(@RequestBody CreateUser userDto) {
+    public ResponseEntity<?> createUser(@RequestBody CreateUser userDto) {
+        if (!userRegistrationEnabled) {
+            return new ResponseEntity<>("User registration is currently disabled", HttpStatus.SERVICE_UNAVAILABLE);
+        }
         log.info("creating user with: {}", userDto.toString());
         return ResponseEntity.ok(userService.createUser(userDto));
     }
@@ -40,7 +56,10 @@ public class UserController {
      * @return The list of user DTOs
      */
     @GetMapping
-    public ResponseEntity<List<UserDto>> readAllUsers() {
+    public ResponseEntity<?> readAllUsers() {
+        if (!userReadEnabled) {
+            return new ResponseEntity<>("User read is currently disabled", HttpStatus.SERVICE_UNAVAILABLE);
+        }
         return ResponseEntity.ok(userService.readAllUsers());
     }
 
@@ -64,7 +83,10 @@ public class UserController {
      * @return The response entity containing the updated user and HTTP status.
      */
     @PatchMapping("/{id}")
-    public ResponseEntity<Response> updateUserStatus(@PathVariable Long id, @RequestBody UserUpdateStatus userUpdate) {
+    public ResponseEntity<?> updateUserStatus(@PathVariable Long id, @RequestBody UserUpdateStatus userUpdate) {
+        if (!userUpdateStatusEnabled) {
+            return new ResponseEntity<>("User status update is currently disabled", HttpStatus.SERVICE_UNAVAILABLE);
+        }
         log.info("updating the user with: {}", userUpdate.toString());
         return new ResponseEntity<>(userService.updateUserStatus(id, userUpdate), HttpStatus.OK);
     }
@@ -77,7 +99,10 @@ public class UserController {
      * @return The response with the updated user information.
      */
     @PutMapping("{id}")
-    public ResponseEntity<Response> updateUser(@PathVariable Long id, @RequestBody UserUpdate userUpdate) {
+    public ResponseEntity<?> updateUser(@PathVariable Long id, @RequestBody UserUpdate userUpdate) {
+        if (!userUpdateProfileEnabled) {
+            return new ResponseEntity<>("User profile update is currently disabled", HttpStatus.SERVICE_UNAVAILABLE);
+        }
         return new ResponseEntity<>(userService.updateUser(id, userUpdate), HttpStatus.OK);
     }
 

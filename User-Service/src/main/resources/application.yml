@@ -22,6 +22,17 @@ spring:
         format_sql: true
 
 
+# Feature flags
+feature:
+  user-registration:
+    enabled: true
+  user-read:
+    enabled: true
+  user-update-profile:
+    enabled: true
+  user-update-status:
+    enabled: true
+
 app:
   config:
     keycloak:

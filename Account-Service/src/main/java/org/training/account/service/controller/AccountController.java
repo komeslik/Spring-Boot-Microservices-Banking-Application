@@ -2,6 +2,7 @@ package org.training.account.service.controller;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -21,6 +22,15 @@ public class AccountController {
 
     private final AccountService accountService;
 
+    @Value("${feature.account-creation.enabled:true}")
+    private boolean accountCreationEnabled;
+
+    @Value("${feature.account-read.enabled:true}")
+    private boolean accountReadEnabled;
+
+    @Value("${feature.account-update-status.enabled:true}")
+    private boolean accountUpdateStatusEnabled;
+
     /**
      * Create an account using the provided accountDto
      *
@@ -28,7 +38,10 @@ public class AccountController {
      * @return The response entity with the created account and HTTP status code
      */
     @PostMapping
-    public ResponseEntity<Response> createAccount(@RequestBody AccountDto accountDto) {
+    public ResponseEntity<?> createAccount(@RequestBody AccountDto accountDto) {
+        if (!accountCreationEnabled) {
+            return new ResponseEntity<>("Account creation is currently disabled", HttpStatus.SERVICE_UNAVAILABLE);
+        }
         return new ResponseEntity<>(accountService.createAccount(accountDto), HttpStatus.CREATED);
     }
 
@@ -40,7 +53,10 @@ public class AccountController {
      * @return The response entity with the updated account status.
      */
     @PatchMapping
-    public ResponseEntity<Response> updateAccountStatus(@RequestParam String accountNumber,@RequestBody AccountStatusUpdate accountStatusUpdate) {
+    public ResponseEntity<?> updateAccountStatus(@RequestParam String accountNumber,@RequestBody AccountStatusUpdate accountStatusUpdate) {
+        if (!accountUpdateStatusEnabled) {
+            return new ResponseEntity<>("Account status update is currently disabled", HttpStatus.SERVICE_UNAVAILABLE);
+        }
         return ResponseEntity.ok(accountService.updateStatus(accountNumber, accountStatusUpdate));
     }
 
@@ -51,7 +67,10 @@ public class AccountController {
      * @return The account DTO if found, or a 404 response if not found.
      */
     @GetMapping
-    public ResponseEntity<AccountDto> readByAccountNumber(@RequestParam String accountNumber) {
+    public ResponseEntity<?> readByAccountNumber(@RequestParam String accountNumber) {
+        if (!accountReadEnabled) {
+            return new ResponseEntity<>("Account read is currently disabled", HttpStatus.SERVICE_UNAVAILABLE);
+        }
         return ResponseEntity.ok(accountService.readAccountByAccountNumber(accountNumber));
     }
 

@@ -21,3 +21,12 @@ spring:
 
 server:
   port: 8081
+
+# Feature flags
+feature:
+  account-creation:
+    enabled: true
+  account-read:
+    enabled: true
+  account-update-status:
+    enabled: true
