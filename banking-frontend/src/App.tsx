@@ -163,7 +163,7 @@ function App() {
             {activeTab === 'accounts' && <AccountsPanel apiCall={apiCall} getBase={getBase} />}
             {activeTab === 'transfers' && <TransfersPanel apiCall={apiCall} getBase={getBase} />}
             {activeTab === 'transactions' && <TransactionsPanel apiCall={apiCall} getBase={getBase} />}
-            {activeTab === 'demo' && <DemoPanel />}
+            {activeTab === 'demo' && <DemoPanel addLog={addLog} />}
           </div>
 
           <div className="bg-white rounded-lg border border-gray-200">
