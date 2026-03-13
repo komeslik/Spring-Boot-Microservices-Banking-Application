@@ -3,7 +3,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import httpx
 import os
+import re
 import random
+import time
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -580,4 +582,455 @@ def _build_frontend_removal_prompt(flag: dict) -> str:
        - A clear statement like "All X tests passed" with the specific count
 
 **Important:** The flag is currently enabled (true), so removing it means the Send Money component should always be shown. Do NOT remove the component itself.
+"""
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# VERSION DASHBOARD
+# ══════════════════════════════════════════════════════════════════════════════
+
+# Service registry: all services with their pom.xml / package.json paths
+SERVICE_REGISTRY = [
+    {
+        "id": "service-registry",
+        "name": "Service Registry (Eureka)",
+        "type": "backend",
+        "port": 8761,
+        "pom_path": "Service-Registry/pom.xml",
+    },
+    {
+        "id": "api-gateway",
+        "name": "API Gateway",
+        "type": "backend",
+        "port": 8080,
+        "pom_path": "API-Gateway/pom.xml",
+    },
+    {
+        "id": "user-service",
+        "name": "User Service",
+        "type": "backend",
+        "port": 8082,
+        "pom_path": "User-Service/pom.xml",
+    },
+    {
+        "id": "account-service",
+        "name": "Account Service",
+        "type": "backend",
+        "port": 8081,
+        "pom_path": "Account-Service/pom.xml",
+    },
+    {
+        "id": "fund-transfer",
+        "name": "Fund Transfer Service",
+        "type": "backend",
+        "port": 8085,
+        "pom_path": "Fund-Transfer/pom.xml",
+    },
+    {
+        "id": "transaction-service",
+        "name": "Transaction Service",
+        "type": "backend",
+        "port": 8084,
+        "pom_path": "Transaction-Service/pom.xml",
+    },
+    {
+        "id": "sequence-generator",
+        "name": "Sequence Generator",
+        "type": "backend",
+        "port": 8083,
+        "pom_path": "Sequence-Generator/pom.xml",
+    },
+    {
+        "id": "banking-frontend",
+        "name": "Banking Frontend",
+        "type": "frontend",
+        "port": 5174,
+        "package_json_path": "banking-frontend/package.json",
+    },
+]
+
+# Latest stable versions (known targets)
+LATEST_VERSIONS = {
+    "spring_boot": "3.4.3",
+    "spring_cloud": "2024.0.0",
+    "java": "21",
+    "react": "19.0.0",
+    "react_dom": "19.0.0",
+    "typescript": "5.7.3",
+    "vite": "6.2.0",
+}
+
+# Cache for version data
+_version_cache: dict[str, list[dict]] = {"services": []}
+_version_cache_time: float = 0.0
+VERSION_CACHE_TTL = 120.0  # seconds
+
+# In-memory tracking of upgrade sessions
+upgrade_sessions: dict[str, dict] = {}
+
+
+def _parse_pom_version(pom_content: str, tag: str) -> str:
+    """Extract a version string from a pom.xml content."""
+    match = re.search(rf"<{tag}>([^<]+)</{tag}>", pom_content)
+    return match.group(1) if match else "unknown"
+
+
+def _parse_pom_property(pom_content: str, prop: str) -> str:
+    """Extract a property value from pom.xml <properties> block."""
+    match = re.search(rf"<{prop}>([^<]+)</{prop}>", pom_content)
+    return match.group(1) if match else "unknown"
+
+
+def _parse_package_json_dep(pkg_content: str, dep_name: str) -> str:
+    """Extract a dependency version from package.json content."""
+    match = re.search(rf'"{dep_name}"\s*:\s*"([^"]+)"', pkg_content)
+    return match.group(1).lstrip("^~") if match else "unknown"
+
+
+def _version_is_outdated(current: str, latest: str) -> bool:
+    """Simple major version comparison."""
+    try:
+        current_clean = current.lstrip("^~").split(".")[0]
+        latest_clean = latest.lstrip("^~").split(".")[0]
+        return int(current_clean) < int(latest_clean)
+    except (ValueError, IndexError):
+        return current != latest
+
+
+async def _fetch_service_versions() -> list[dict]:
+    """Fetch current version info for all services from GitHub."""
+    global _version_cache, _version_cache_time
+
+    now = time.time()
+    if _version_cache["services"] and (now - _version_cache_time) < VERSION_CACHE_TTL:
+        return _version_cache["services"]
+
+    results = []
+    try:
+        async with httpx.AsyncClient() as client:
+            for svc in SERVICE_REGISTRY:
+                svc_info: dict = {
+                    "id": svc["id"],
+                    "name": svc["name"],
+                    "type": svc["type"],
+                    "port": svc["port"],
+                    "versions": {},
+                    "latest": {},
+                    "outdated": [],
+                }
+
+                if svc["type"] == "backend":
+                    url = f"{GITHUB_RAW_BASE}/{svc['pom_path']}"
+                    try:
+                        resp = await client.get(url, timeout=10.0)
+                        if resp.status_code == 200:
+                            pom = resp.text
+                            sb_ver = _parse_pom_version(pom, "version")
+                            # Find the spring-boot-starter-parent version specifically
+                            parent_match = re.search(
+                                r"<parent>.*?<artifactId>spring-boot-starter-parent</artifactId>\s*<version>([^<]+)</version>",
+                                pom,
+                                re.DOTALL,
+                            )
+                            if parent_match:
+                                sb_ver = parent_match.group(1)
+                            java_ver = _parse_pom_property(pom, "java.version")
+                            sc_ver = _parse_pom_property(pom, "spring-cloud.version")
+
+                            svc_info["versions"] = {
+                                "spring_boot": sb_ver,
+                                "java": java_ver,
+                                "spring_cloud": sc_ver,
+                            }
+                            svc_info["latest"] = {
+                                "spring_boot": LATEST_VERSIONS["spring_boot"],
+                                "java": LATEST_VERSIONS["java"],
+                                "spring_cloud": LATEST_VERSIONS["spring_cloud"],
+                            }
+                            for key in ["spring_boot", "java", "spring_cloud"]:
+                                if _version_is_outdated(
+                                    svc_info["versions"][key],
+                                    svc_info["latest"][key],
+                                ):
+                                    svc_info["outdated"].append(key)
+                    except httpx.RequestError:
+                        svc_info["versions"] = {"error": "Failed to fetch"}
+
+                else:  # frontend
+                    url = f"{GITHUB_RAW_BASE}/{svc['package_json_path']}"
+                    try:
+                        resp = await client.get(url, timeout=10.0)
+                        if resp.status_code == 200:
+                            pkg = resp.text
+                            react_ver = _parse_package_json_dep(pkg, "react")
+                            ts_ver = _parse_package_json_dep(pkg, "typescript")
+                            vite_ver = _parse_package_json_dep(pkg, "vite")
+
+                            svc_info["versions"] = {
+                                "react": react_ver,
+                                "typescript": ts_ver,
+                                "vite": vite_ver,
+                            }
+                            svc_info["latest"] = {
+                                "react": LATEST_VERSIONS["react"],
+                                "typescript": LATEST_VERSIONS["typescript"],
+                                "vite": LATEST_VERSIONS["vite"],
+                            }
+                            for key in ["react", "typescript", "vite"]:
+                                if _version_is_outdated(
+                                    svc_info["versions"][key],
+                                    svc_info["latest"][key],
+                                ):
+                                    svc_info["outdated"].append(key)
+                    except httpx.RequestError:
+                        svc_info["versions"] = {"error": "Failed to fetch"}
+
+                # Attach upgrade session info if any
+                if svc["id"] in upgrade_sessions:
+                    svc_info["upgrade"] = upgrade_sessions[svc["id"]]
+
+                results.append(svc_info)
+
+    except Exception:
+        return _version_cache.get("services", [])
+
+    _version_cache["services"] = results
+    _version_cache_time = now
+    return results
+
+
+async def _refresh_upgrade_sessions() -> None:
+    """Poll Devin API to update the status of any in-progress upgrade sessions."""
+    if not DEVIN_API_TOKEN:
+        return
+    in_progress = [
+        (sid, info) for sid, info in upgrade_sessions.items()
+        if info["status"] == "in_progress"
+    ]
+    if not in_progress:
+        return
+    try:
+        async with httpx.AsyncClient() as client:
+            for service_id, session_info in in_progress:
+                try:
+                    response = await client.get(
+                        f"{DEVIN_API_URL}/session/{session_info['session_id']}",
+                        headers={"Authorization": f"Bearer {DEVIN_API_TOKEN}"},
+                        timeout=10.0,
+                    )
+                    if response.status_code == 200:
+                        devin_data = response.json()
+                        devin_status = devin_data.get("status", "unknown")
+                        if devin_status in ("finished", "stopped"):
+                            session_info["status"] = "completed"
+                            session_info["pull_request"] = devin_data.get("pull_request")
+                        elif devin_status == "error":
+                            session_info["status"] = "failed"
+                except httpx.RequestError:
+                    pass
+    except httpx.RequestError:
+        pass
+
+
+@app.get("/api/versions")
+async def list_versions():
+    """Return version info for all services."""
+    await _refresh_upgrade_sessions()
+    services = await _fetch_service_versions()
+    total_outdated = sum(1 for s in services if len(s.get("outdated", [])) > 0)
+    return {
+        "services": services,
+        "total": len(services),
+        "outdated_count": total_outdated,
+    }
+
+
+@app.post("/api/versions/{service_id}/upgrade")
+async def upgrade_service(service_id: str):
+    """Trigger a Devin session to upgrade a service to latest versions."""
+    if not DEVIN_API_TOKEN:
+        raise HTTPException(status_code=500, detail="DEVIN_API_TOKEN not configured")
+
+    svc = None
+    for s in SERVICE_REGISTRY:
+        if s["id"] == service_id:
+            svc = s
+            break
+    if not svc:
+        raise HTTPException(status_code=404, detail=f"Service '{service_id}' not found")
+
+    if service_id in upgrade_sessions and upgrade_sessions[service_id]["status"] == "in_progress":
+        return {
+            "message": "Upgrade already in progress",
+            "session": upgrade_sessions[service_id],
+        }
+
+    # Fetch current versions to build a meaningful prompt
+    services = await _fetch_service_versions()
+    svc_info = next((s for s in services if s["id"] == service_id), None)
+
+    if svc["type"] == "backend":
+        prompt = _build_backend_upgrade_prompt(svc, svc_info)
+    else:
+        prompt = _build_frontend_upgrade_prompt(svc, svc_info)
+
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"{DEVIN_API_URL}/sessions",
+                headers={
+                    "Authorization": f"Bearer {DEVIN_API_TOKEN}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "prompt": prompt,
+                    "title": f"Upgrade {svc['name']} to latest versions",
+                    "tags": ["version-upgrade", service_id],
+                },
+                timeout=30.0,
+            )
+
+        if response.status_code != 200:
+            raise HTTPException(
+                status_code=response.status_code,
+                detail=f"Devin API error: {response.text}",
+            )
+
+        data = response.json()
+        session_info = {
+            "service_id": service_id,
+            "session_id": data["session_id"],
+            "session_url": data["url"],
+            "status": "in_progress",
+        }
+        upgrade_sessions[service_id] = session_info
+
+        return {
+            "message": f"Devin session created to upgrade {svc['name']}",
+            "session": session_info,
+        }
+    except httpx.RequestError as e:
+        raise HTTPException(status_code=500, detail=f"Failed to reach Devin API: {str(e)}")
+
+
+def _build_backend_upgrade_prompt(svc: dict, svc_info: dict | None) -> str:
+    current = svc_info["versions"] if svc_info else {}
+    latest = svc_info["latest"] if svc_info else LATEST_VERSIONS
+    outdated = svc_info["outdated"] if svc_info else ["spring_boot", "java", "spring_cloud"]
+
+    pom_path = svc["pom_path"]
+    service_dir = pom_path.rsplit("/", 1)[0]
+
+    upgrades_desc = []
+    if "spring_boot" in outdated:
+        upgrades_desc.append(f"- Spring Boot: {current.get('spring_boot', '?')} -> {latest.get('spring_boot', LATEST_VERSIONS['spring_boot'])}")
+    if "java" in outdated:
+        upgrades_desc.append(f"- Java: {current.get('java', '?')} -> {latest.get('java', LATEST_VERSIONS['java'])}")
+    if "spring_cloud" in outdated:
+        upgrades_desc.append(f"- Spring Cloud: {current.get('spring_cloud', '?')} -> {latest.get('spring_cloud', LATEST_VERSIONS['spring_cloud'])}")
+
+    upgrades_text = "\n".join(upgrades_desc) if upgrades_desc else "- All versions to latest"
+
+    return f"""You are tasked with upgrading a backend microservice in the Spring Boot Microservices Banking Application.
+
+**Repository:** {REPO}
+**Service:** {svc['name']}
+**Service Directory:** {service_dir}
+**POM File:** {pom_path}
+
+## Version Upgrades Needed
+{upgrades_text}
+
+## Instructions
+
+1. **Create a new branch** from `main` named `devin/upgrade-{svc['id']}`.
+
+2. **Update `{pom_path}`**:
+   - Update `spring-boot-starter-parent` version to `{latest.get('spring_boot', LATEST_VERSIONS['spring_boot'])}`.
+   - Update `<java.version>` property to `{latest.get('java', LATEST_VERSIONS['java'])}`.
+   - Update `<spring-cloud.version>` property to `{latest.get('spring_cloud', LATEST_VERSIONS['spring_cloud'])}`.
+
+3. **Migrate javax -> jakarta namespace** (required for Spring Boot 3.x):
+   - In ALL Java source files under `{service_dir}/src/`, replace `import javax.persistence.*` with `import jakarta.persistence.*`.
+   - Replace `import javax.validation.*` with `import jakarta.validation.*`.
+   - Replace any other `javax.*` imports that have moved to `jakarta.*` in Jakarta EE.
+
+4. **Update GlobalExceptionHandler** (if present in the service):
+   - The `handleMethodArgumentNotValid` method signature changed in Spring Boot 3.x.
+   - The method now takes `HttpStatusCode` instead of `HttpStatus` as the third parameter.
+   - The method visibility changed from `public` to `protected`.
+   - Add `import org.springframework.http.HttpStatusCode;` if needed.
+
+5. **Update test files** if any tests use deprecated Spring Boot 2.x APIs:
+   - `@MockBean` import path may have changed in Spring Boot 3.x (moved to `org.springframework.test.context.bean.override.mockito`).
+   - Check that all test utilities still compile.
+
+6. **Build the service**: Run `mvn clean package -DskipTests` in the `{service_dir}/` directory first to check compilation.
+
+7. **Run tests**: Run `mvn test` in `{service_dir}/` to verify all tests pass. **Capture the full terminal output**.
+
+8. **Take a screenshot** of the test results.
+
+9. **Create a PR** into `main` with:
+   - Title: "Upgrade {svc['name']} to Spring Boot {latest.get('spring_boot', LATEST_VERSIONS['spring_boot'])}, Java {latest.get('java', LATEST_VERSIONS['java'])}"
+   - Description including what was upgraded, files changed, and a **Test Results** section with full terminal output and screenshot.
+
+**Important:** This service runs alongside other services that are still on Spring Boot 2.7.x. The upgraded service must remain compatible with the Eureka service registry and other microservices via Feign clients / REST. Do NOT change any API contracts or endpoint signatures.
+"""
+
+
+def _build_frontend_upgrade_prompt(svc: dict, svc_info: dict | None) -> str:
+    current = svc_info["versions"] if svc_info else {}
+    latest = svc_info["latest"] if svc_info else LATEST_VERSIONS
+    outdated = svc_info["outdated"] if svc_info else ["react", "typescript", "vite"]
+
+    pkg_path = svc["package_json_path"]
+    frontend_dir = pkg_path.rsplit("/", 1)[0]
+
+    upgrades_desc = []
+    if "react" in outdated:
+        upgrades_desc.append(f"- React: {current.get('react', '?')} -> {latest.get('react', LATEST_VERSIONS['react'])}")
+    if "typescript" in outdated:
+        upgrades_desc.append(f"- TypeScript: {current.get('typescript', '?')} -> {latest.get('typescript', LATEST_VERSIONS['typescript'])}")
+    if "vite" in outdated:
+        upgrades_desc.append(f"- Vite: {current.get('vite', '?')} -> {latest.get('vite', LATEST_VERSIONS['vite'])}")
+
+    upgrades_text = "\n".join(upgrades_desc) if upgrades_desc else "- All versions to latest"
+
+    return f"""You are tasked with upgrading the frontend of the Spring Boot Microservices Banking Application.
+
+**Repository:** {REPO}
+**Frontend Directory:** {frontend_dir}
+**Package JSON:** {pkg_path}
+
+## Version Upgrades Needed
+{upgrades_text}
+
+## Instructions
+
+1. **Create a new branch** from `main` named `devin/upgrade-{svc['id']}`.
+
+2. **Update dependencies** in `{frontend_dir}/`:
+   - Run `npm install react@latest react-dom@latest` to upgrade React.
+   - Run `npm install -D typescript@latest` to upgrade TypeScript.
+   - Run `npm install -D vite@latest` to upgrade Vite.
+   - Also update `@types/react` and `@types/react-dom` to versions compatible with the new React.
+   - Run `npm install` to ensure lock file is updated.
+
+3. **Fix any breaking changes**:
+   - If upgrading to React 19, check for deprecated APIs (e.g., `ReactDOM.render` should use `createRoot`).
+   - Update `@vitejs/plugin-react` if needed for Vite compatibility.
+   - Check TypeScript strict mode changes.
+
+4. **Build the frontend**: Run `npm run build` in `{frontend_dir}/` to check for compilation errors.
+
+5. **Run tests**: Run `npm test` in `{frontend_dir}/` to verify tests pass. **Capture the full terminal output**.
+
+6. **Take a screenshot** of the test results.
+
+7. **Create a PR** into `main` with:
+   - Title: "Upgrade Banking Frontend to React {latest.get('react', LATEST_VERSIONS['react'])}, TypeScript {latest.get('typescript', LATEST_VERSIONS['typescript'])}"
+   - Description including what was upgraded, files changed, and a **Test Results** section with full terminal output and screenshot.
+
+**Important:** Do NOT change any functionality or UI. This is a dependency upgrade only.
 """
